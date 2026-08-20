@@ -4,54 +4,68 @@ header('Access-Control-Allow-Origin: *');
 
 $type = $_GET['type'] ?? 'movie';
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
-$api_key = 'Ak_JJt0dxVPSxsDbNNCHob5pv8HkDGkZMzt'; // Tu clave
+$api_key = 'Ak_JJt0dxVPSxsDbNNCHob5pv8HkDGkZMzt'; // Tu clave de Vimeus
 
 $base_url = 'https://vimeus.com/api/listing/' . ($type === 'anime' ? 'animes' : ($type === 'serie' ? 'series' : 'movies'));
 
-$opts = [
-    "http" => [
-        "method" => "GET",
-        "header" => "X-API-Key: $api_key\r\n"
-    ]
-];
-$context = stream_context_create($opts);
-
 if ($search !== '') {
-    $found = [];
-    $max_pages = 20; // Render es tan rápido que puede escanear 20 páginas al instante
-    
+    $max_pages = 15; // Escanea 15 páginas de Vimeus al mismo tiempo
+    $multi = curl_multi_init();
+    $channels = [];
+
+    // Preparamos todas las conexiones simultáneas
     for ($p = 1; $p <= $max_pages; $p++) {
-        $url = $base_url . "?page=" . $p;
-        $response = @file_get_contents($url, false, $context);
-        if (!$response) continue;
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $base_url . "?page=" . $p);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ["X-API-Key: $api_key"]);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // Evita el bloqueo SSL de Docker
+        curl_multi_add_handle($multi, $ch);
+        $channels[$p] = $ch;
+    }
+
+    // Ejecutamos todas las peticiones a la vez (tarda menos de 1 segundo)
+    $active = null;
+    do {
+        $mrc = curl_multi_exec($multi, $active);
+    } while ($mrc == CURLM_CALL_MULTI_PERFORM || $active);
+
+    $found = [];
+    $ids = [];
+
+    // Recolectamos los resultados de las 15 páginas
+    foreach ($channels as $ch) {
+        $response = curl_multi_getcontent($ch);
+        curl_multi_remove_handle($multi, $ch);
         
-        $json = json_decode($response, true);
-        $items = $json['data']['movies'] ?? $json['data']['series'] ?? $json['data']['animes'] ?? [];
-        
-        if (empty($items)) break; // Si ya no hay más películas, terminamos de buscar
-        
-        foreach ($items as $item) {
-            if (isset($item['title']) && stripos($item['title'], $search) !== false) {
-                $found[] = $item;
+        if ($response) {
+            $json = json_decode($response, true);
+            $items = $json['data']['movies'] ?? $json['data']['series'] ?? $json['data']['animes'] ?? [];
+            
+            foreach ($items as $item) {
+                if (isset($item['title']) && stripos($item['title'], $search) !== false) {
+                    // Evitar películas duplicadas
+                    if (!in_array($item['tmdb_id'], $ids)) {
+                        $found[] = $item;
+                        $ids[] = $item['tmdb_id'];
+                    }
+                }
             }
         }
     }
+    curl_multi_close($multi);
     
-    // Evitar resultados duplicados
-    $unique_found = [];
-    $ids = [];
-    foreach ($found as $item) {
-        if (!in_array($item['tmdb_id'], $ids)) {
-            $unique_found[] = $item;
-            $ids[] = $item['tmdb_id'];
-        }
-    }
-    
-    echo json_encode(['data' => ['result' => array_values($unique_found)]]);
+    echo json_encode(['data' => ['result' => array_values($found)]]);
 } else {
-    // Carga normal de la página de inicio
+    // Carga normal del catálogo usando cURL seguro
     $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-    $url = $base_url . "?page=" . $page;
-    echo @file_get_contents($url, false, $context);
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $base_url . "?page=" . $page);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ["X-API-Key: $api_key"]);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    $response = curl_exec($ch);
+    curl_close($ch);
+    echo $response;
 }
 ?>
