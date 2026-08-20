@@ -480,7 +480,7 @@ function appendGrid(list) {
 }
 
 // ==========================================
-// BUSCADOR INTELIGENTE CONECTADO AL SERVIDOR
+// BUSCADOR INTELIGENTE CONECTADO A TMDB
 // ==========================================
 function handleSearch() {
     const query = document.getElementById('searchInput').value.toLowerCase().trim();
@@ -495,30 +495,35 @@ function handleSearch() {
     }
 
     loadBtn.style.display = 'none';
-
-    // 1. Busca local primero
-    const localFiltered = allLoadedItems.filter(item => item.title.toLowerCase().includes(query));
-    if (localFiltered.length > 0) {
-        renderGrid(localFiltered);
-        return;
-    }
-
-    // 2. Si no está en pantalla, le pregunta al servidor PHP usando el parámetro de búsqueda
-    document.getElementById('catalogGrid').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#888;"><i class="fas fa-spinner fa-spin fa-2x"></i><br>Buscando en la base de datos...</div>';
+    document.getElementById('catalogGrid').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#888;"><i class="fas fa-spinner fa-spin fa-2x"></i><br>Buscando en la base de datos global...</div>';
 
     searchTimeout = setTimeout(async () => {
         try {
-            const response = await fetch(`api.php?type=${currentCategory}&search=${encodeURIComponent(query)}`);
-            const json = await response.json();
-            const items = json.data.result || json.data.movies || json.data.series || json.data.animes || [];
+            // Buscamos directamente en TMDB para encontrar cualquier título al instante
+            const tmdbType = currentCategory === 'movie' ? 'movie' : 'tv';
+            const res = await fetch(`https://api.themoviedb.org/3/search/${tmdbType}?api_key=${TMDB_API_KEY}&language=es-ES&query=${encodeURIComponent(query)}`);
+            const data = await res.json();
             
-            if (items.length > 0) {
-                renderGrid(items);
+            if (data.results && data.results.length > 0) {
+                // Adaptamos los resultados de TMDB al formato visual de nuestra app
+                const mappedItems = data.results.map(item => ({
+                    tmdb_id: item.id,
+                    title: item.title || item.name,
+                    poster: item.poster_path,
+                    backdrop: item.backdrop_path,
+                    type: currentCategory
+                })).filter(item => item.poster); // Solo mostrar si tienen póster
+                
+                if(mappedItems.length > 0) {
+                    renderGrid(mappedItems);
+                } else {
+                    document.getElementById('catalogGrid').innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:40px;color:#888;">No se encontró "${query}".</div>`;
+                }
             } else {
                 document.getElementById('catalogGrid').innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:40px;color:#888;">No se encontró "${query}" en esta categoría. Prueba buscando en <b>Series</b> o <b>Anime</b>.</div>`;
             }
         } catch (e) {
-            document.getElementById('catalogGrid').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#ff5e57;">Error al buscar en el servidor.</div>';
+            document.getElementById('catalogGrid').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#ff5e57;">Error al buscar.</div>';
         }
     }, 400);
 }
