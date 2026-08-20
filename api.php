@@ -1,49 +1,55 @@
 <?php
 header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
 
 $type = $_GET['type'] ?? 'movie';
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 $api_key = 'Ak_JJt0dxVPSxsDbNNCHob5pv8HkDGkZMzt'; // Tu clave
 
-$endpoints = [
-    'movie' => 'https://vimeus.com/api/listing/movies',
-    'serie' => 'https://vimeus.com/api/listing/series',
-    'anime' => 'https://vimeus.com/api/listing/animes'
-];
+$base_url = 'https://vimeus.com/api/listing/' . ($type === 'anime' ? 'animes' : ($type === 'serie' ? 'series' : 'movies'));
 
-$base_url = $endpoints[$type] ?? $endpoints['movie'];
-$context = stream_context_create(['http' => ['header' => "X-API-Key: $api_key\r\n"]]);
+$opts = [
+    "http" => [
+        "method" => "GET",
+        "header" => "X-API-Key: $api_key\r\n"
+    ]
+];
+$context = stream_context_create($opts);
 
 if ($search !== '') {
     $found = [];
-    // Buscamos a través de las primeras 5 páginas de Vimeus para asegurar encontrar contenido como Rambo
-    for ($p = 1; $p <= 5; $p++) {
+    $max_pages = 20; // Render es tan rápido que puede escanear 20 páginas al instante
+    
+    for ($p = 1; $p <= $max_pages; $p++) {
         $url = $base_url . "?page=" . $p;
         $response = @file_get_contents($url, false, $context);
-        
-        if ($response === FALSE) continue;
+        if (!$response) continue;
         
         $json = json_decode($response, true);
-        $data = $json['data'] ?? [];
-        $list = $data['movies'] ?? $data['series'] ?? $data['animes'] ?? [];
+        $items = $json['data']['movies'] ?? $json['data']['series'] ?? $json['data']['animes'] ?? [];
         
-        if (empty($list)) break;
-
-        foreach ($list as $item) {
+        if (empty($items)) break; // Si ya no hay más películas, terminamos de buscar
+        
+        foreach ($items as $item) {
             if (isset($item['title']) && stripos($item['title'], $search) !== false) {
-                // Evitar duplicados
-                $exists = false;
-                foreach($found as $f) {
-                    if($f['tmdb_id'] == $item['tmdb_id']) $exists = true;
-                }
-                if(!$exists) {
-                    $found[] = $item;
-                }
+                $found[] = $item;
             }
         }
     }
-    echo json_encode(['data' => ['result' => $found]]);
+    
+    // Evitar resultados duplicados
+    $unique_found = [];
+    $ids = [];
+    foreach ($found as $item) {
+        if (!in_array($item['tmdb_id'], $ids)) {
+            $unique_found[] = $item;
+            $ids[] = $item['tmdb_id'];
+        }
+    }
+    
+    echo json_encode(['data' => ['result' => array_values($unique_found)]]);
 } else {
+    // Carga normal de la página de inicio
     $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
     $url = $base_url . "?page=" . $page;
     echo @file_get_contents($url, false, $context);
